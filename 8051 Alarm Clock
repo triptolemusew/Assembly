@@ -1,0 +1,994 @@
+;THIS CODE IS WRITTEN BY FERRIS DANIEL.
+ 
+;==CODE STARTS HERE==
+;ALL OF THIS IS THE INITIALIZATION FOR THE INTERNAL RAM LOCATION FOR IMPORTANT VARIABLES
+ 
+;BUTTONS LIST
+;P3.0 - ALARM1
+;P3.1 - ALARM2
+;P3.4 - SETTING TIME
+;P3.5 - INCREASE HOUR
+;P3.6 - INCREASE MINUTE
+;P3.7 - BACK TO MENU
+ 
+TICK            EQU             40H
+SEC             EQU             41H
+SEC10           EQU             42H
+MIN             EQU             43H
+MIN10           EQU             44H
+HR1             EQU             45H
+HR10            EQU             46H
+HR              EQU             47H
+MIN1            EQU             48H
+ 
+MIN1_AL         EQU             35H
+MIN_AL          EQU             30H
+MIN10_AL        EQU             31H
+HR_AL           EQU             32H
+HR1_AL          EQU             33H
+HR10_AL         EQU             34H
+ 
+ALARM1_NUM1     EQU             36H
+ALARM1_NUM2     EQU             37H
+ALARM1_NUM3     EQU             38H
+ALARM1_NUM4     EQU             39H
+ 
+ALARM2_NUM1     EQU             50H
+ALARM2_NUM2     EQU             51H
+ALARM2_NUM3     EQU             52H
+ALARM2_NUM4     EQU             53H
+ 
+CDT_SEC1        EQU             60H
+CDT_SEC10       EQU             61H
+CDT_MIN1        EQU             62H
+CDT_MIN10       EQU             63H
+CDT_SEC         EQU             64H
+CDT_MIN         EQU             65H
+CDT_TICK        EQU             66H
+ 
+ 
+ 
+ORG             0000H
+JMP             MAIN
+ORG             000BH
+JMP             T0ISR
+ORG             001BH
+JMP             LOSING_NUMBERS
+       
+MAIN:
+        MOV             TMOD, #11H ; TIMER 0 AND TIMER 1 IN MODE 0
+        MOV             IE, #8FH   ;ENABLE INT1, INT0, TIMER1 AND TIMER0
+       
+        CLR             P0.0
+       
+        MOV             P1,     #00H
+        MOV             P2,     #00H
+        MOV             P3,     #0FFH
+       
+;==Refreshing the main menu that displays "Hi.." while waiting for the user's input.
+ 
+JUMP_TO_BTN:
+        CLR     P0.0
+        MOV     P2,     #08H
+        MOV     P1,     #089H
+        CALL    DELAY
+       
+        MOV     P2,     #04H
+        MOV     P1,     #0F9H
+        CALL    DELAY
+       
+        MOV     P2,     #02H
+        MOV     P1,     #07FH
+        CALL    DELAY
+       
+        MOV     P2,     #01H
+        MOV     P1,     #07FH
+        CALL    DELAY
+S1:
+                JB      P3.4,S2
+                CALL    SET_TIME
+S2:
+                JB      P3.5,S3
+                CALL    SETTING_ALARM
+S3:
+                JB      P3.6,S4
+                SETB    TF0 ;FORCING THE TIMER TO START BY SETTING THE TIMER 0 OVERFLOW FLAG
+                SJMP    $
+S4:    
+                JB      P3.0,S5
+                CLR     A
+        MOV             MIN1_AL,A
+        MOV             MIN_AL,A               
+        MOV             MIN10_AL,A     
+        MOV             HR_AL,A
+        MOV             HR1_AL,A
+        MOV             HR10_AL,A      
+        MOV             TICK,   A
+        MOV             SEC,    A
+        MOV             SEC10,  A
+        MOV             MIN,    A
+        MOV             MIN1,   A
+        MOV             MIN10,  A
+        MOV             HR,             A
+        MOV             HR1,    A
+        MOV             HR10,   A
+        JMP             S4
+       
+S5:             JB      P3.1,JUMP_TO_BTN
+                JMP     START
+               
+       
+T0ISR:
+        PUSH    ACC     ;PUSH ACC
+        PUSH    00H     ;SAVING PROCESSOR STATUS
+        CLR     TR0
+        MOV     TH0, #0CEH      ;CREATING 5ms OVERFLOW
+        MOV     TL0, #78H
+        SETB    TR0
+        INC     TICK
+        CALL    IDISPLAY_MIN
+        CALL    IDISPLAY_HR
+        CALL    CHECKING_ALARM1
+        CALL    CHECKING_ALARM2
+ 
+CHECK:  JB      P3.7,REFRESHING ;TRIGGER THE ALARM TO OFF IF IT'S TRIGGERED
+                CALL    DELAY_1S
+                CLR     P0.0
+ 
+REFRESHING:
+        MOV     A, #200 ;5ms * 200 = 1s
+        CJNE    A,TICK,STARTING_SEC
+        CLR     A
+        MOV     TICK,A
+        INC     SEC     ;increase sec if fully 1s and blinking one of the dot.
+        CALL    BLINKL
+ 
+STARTING_SEC:
+        MOV     A,SEC
+        CJNE    A,#10,DISPLAY
+        CLR     A
+        MOV     SEC,A
+        INC     SEC10
+ 
+        MOV     A,SEC10
+        CJNE    A,#6,DISPLAY
+        CLR     A
+        MOV     SEC10,A
+       
+        MOV     A,MIN
+        ADD     A, #1
+        DA      A
+        MOV     MIN,A
+        MOV     A,MIN
+ 
+        CJNE    A,#60H,SPLIT_MIN
+        CLR     A
+        MOV     MIN,A
+        LCALL   SPLIT_MIN21
+       
+        MOV     A, HR
+        ADD     A, #1
+        DA      A
+        MOV     HR,A
+       
+        MOV     A, HR
+        CJNE    A, #24H,SPLIT_HR
+        CLR     A
+        MOV     HR,A
+        LCALL   SPLIT_HR21
+        JMP     SKIP_FINAL
+ 
+DISPLAY:
+        NOP             ;BECAUSE NO NEED TO DISPLAY SECONDS
+                        ;AND JUMP TO SKIP_FINAL
+SKIP_FINAL:
+        POP     00H     ;POP AND RETRIEVE THE SAVED PROCESSOR STATUS
+        POP     ACC
+        RETI            ;RETURN FROM THE TIMER INTERRUPT
+ 
+ 
+SPLIT_HR:
+        ANL     A,#0FH
+        MOV     HR1,    A
+        MOV     A,HR
+        SWAP    A
+        ANL     A,      #0FH
+        MOV     HR10,A
+        JMP     DISPLAY_HR
+       
+DISPLAY_HR:
+DISPLAY_H1:
+        CALL    DELAY
+        MOV     A,      HR1
+        MOV     DPTR,   #ARR
+        MOVC    A,      @A+DPTR
+        MOV     P2, #04H
+        MOV     P1,     A
+ 
+DISPLAY_H2:
+        CALL    DELAY
+        MOV     A,      HR10
+        MOV     DPTR,   #ARR
+        MOVC    A,      @A+DPTR
+        MOV     P2,     #08H
+        MOV     P1,A
+        JMP     SKIP_FINAL
+ 
+SPLIT_MIN:
+        ANL     A,#0FH
+        MOV     MIN1,   A
+        MOV     A,MIN
+        SWAP    A
+        ANL     A,      #0FH
+        MOV     MIN10,A
+        JMP     DISPLAY_MIN
+DISPLAY_MIN:
+DISPLAY_M1:
+        CALL    DELAY
+        MOV     A, MIN1
+        MOV     DPTR,   #ARR
+        MOVC    A,      @A+DPTR
+        MOV     P2,     #01H
+        MOV     P1,A
+ 
+DISPLAY_M2:
+        CALL    DELAY
+        MOV     A,      MIN10
+        MOV     DPTR,   #ARR
+        MOVC    A,      @A+DPTR
+        MOV     P2,     #02H
+        MOV     P1,A
+        JMP     SKIP_FINAL
+ 
+;==REPEAT#1 : REPEAT THE WHOLE FOR FREQUENT DISPLAY
+ 
+iDISPLAY_HR:
+        iDISPLAY_H1:
+        CALL    DELAY
+        MOV     A,      HR1
+        MOV     DPTR,   #ARR
+        MOVC    A,      @A+DPTR
+        MOV P2, #04H
+        MOV     P1,     A
+ 
+        iDISPLAY_H2:
+        CALL    DELAY
+        MOV     A,HR10
+        MOV     DPTR,#ARR
+        MOVC    A,@A+DPTR
+        MOV     P2,     #08H
+        MOV     P1,A
+        RET
+iDISPLAY_MIN:
+iDISPLAY_M1:
+        CALL    DELAY
+        MOV     A, MIN1
+        MOV     DPTR,#ARR
+        MOVC    A,@A+DPTR
+        MOV     P2,     #01H
+        MOV     P1,A
+       
+       
+iDISPLAY_M2:
+        CALL    DELAY
+        MOV     A,MIN10
+        MOV     DPTR,   #ARR
+        MOVC    A,@A+DPTR
+        MOV     P2,     #02H
+        MOV     P1,A
+        RET
+ 
+;==SUBROUTINE FOR SETTING TIME ====
+ 
+SET_TIME:
+WOP:    CALL    DISPLAY_MINi
+POW:    CALL    DISPLAY_HRi
+       
+        JMP     S1_1
+       
+S1_1:   JB      P3.5, S2_2
+        CALL    INCREASE_HOURi
+        JMP     S1_1
+S2_2:   JB      P3.6, S3_3
+        CALL    INCREASE_MINUTEi
+        JMP     S2_2
+S3_3:   JB      P3.7, SET_TIME
+        JMP     S1
+ 
+ 
+INCREASE_MINUTEi:
+        CALL    DELAY_1S
+        CLR     A
+        MOV     A,      MIN
+        ADD     A,      #1
+        DA      A
+        MOV     MIN,    A
+       
+        MOV     A,      MIN
+        CJNE    A,#60H, DISPLAY_MIN_SPLITi
+        CLR     A
+        MOV     MIN,    A
+        RET
+       
+DISPLAY_MIN_SPLITi:
+       
+        ANL     A,      #0FH
+        MOV     MIN1,   A
+        MOV     A,      MIN
+        SWAP    A
+        ANL     A,      #0FH
+        MOV     MIN10,  A
+        JMP     DISPLAY_MINi
+       
+       
+DISPLAY_MINi:
+        DISPLAY_M1i:
+        CALL    DELAY
+        MOV     A,      MIN1
+        MOV     DPTR,   #ARR
+        MOVC    A,      @A+DPTR
+        MOV     P2,     #01H
+        MOV     P1,A
+ 
+        DISPLAY_M2i:
+        CALL    DELAY
+        MOV     A,      MIN10
+        MOV     DPTR,   #ARR
+        MOVC    A,      @A+DPTR
+        MOV     P2,     #02H
+        MOV     P1,A
+        RET
+ 
+INCREASE_HOURi:
+        CALL    DELAY_1S
+        CLR     A
+        MOV     A,      HR
+        ADD     A,      #1
+        DA      A
+        MOV     HR,     A
+       
+        MOV     A,      HR
+        CJNE    A,#24H, DISPLAY_HR_SPLITi
+        CLR     A
+        MOV     HR,     A
+        RET
+       
+DISPLAY_HR_SPLITi:
+       
+        ANL     A,      #0FH
+        MOV     HR1,    A
+        MOV     A,      HR
+        SWAP    A
+        ANL     A,      #0FH
+        MOV     HR10,   A
+        JMP     DISPLAY_HRi
+       
+       
+DISPLAY_HRi:
+        DISPLAY_H1i:
+        CALL    DELAY
+        MOV     A,      HR1
+        MOV     DPTR,   #ARR
+        MOVC    A,      @A+DPTR
+        MOV P2, #04H
+        MOV     P1,     A
+ 
+        DISPLAY_H2i:
+        CALL    DELAY
+        MOV     A,      HR10
+        MOV     DPTR,   #ARR
+        MOVC    A,      @A+DPTR
+        MOV     P2,     #08H
+        MOV     P1,A
+        RET
+;==SUBROUTINE FOR SETTING TIME ENDS HERE==
+ 
+;==SUBROUTINE FOR SETTING ALARM==
+SETTING_ALARM:
+;P3.0 = ALARM1
+;P3.1 = ALARM2
+SET_TIME2:
+        CALL    DISPLAY_HR_2
+        CALL    DISPLAY_MIN_2
+       
+        JMP     S1_1_1
+       
+S1_1_1: JB              P3.4, S2_2_2
+        CALL            INCREASE_HOUR_2
+        JMP             S1_1_1
+S2_2_2: JB              P3.6, S4_4_4
+        CALL            INCREASE_MINUTE_2
+        JMP             S2_2_2
+S4_4_4: JB              P3.0, S5_5_5
+        CALL            SAVING_ALARM1
+       
+        JMP             SET_TIME2
+S5_5_5: JB              P3.1, S3_3_3
+        CALL            SAVING_ALARM2
+       
+        JMP             SET_TIME2
+S3_3_3: JB              P3.7, SET_TIME2
+        JMP             S1
+ 
+SAVING_ALARM:
+SAVING_ALARM1:
+        CALL    DELAY_1S
+        CLR             A
+        MOV             A,HR10_AL
+        MOV             ALARM1_NUM1, A
+        CLR             A
+       
+       
+        MOV             A, HR1_AL
+        MOV             ALARM1_NUM2, A
+        CLR             A
+       
+ 
+        MOV             A, MIN10_AL
+        MOV             ALARM1_NUM3, A
+        CLR             A
+       
+        MOV             A, MIN1_AL
+        MOV             ALARM1_NUM4, A
+        CLR             A
+        RET
+SAVING_ALARM2:
+        CALL    DELAY_1S
+        CLR             A
+        MOV             A,HR10_AL
+        MOV             ALARM2_NUM1, A
+        CLR             A
+       
+       
+        MOV             A, HR1_AL
+        MOV             ALARM2_NUM2, A
+        CLR             A
+       
+ 
+        MOV             A, MIN10_AL
+        MOV             ALARM2_NUM3, A
+        CLR             A
+       
+        MOV             A, MIN1_AL
+        MOV             ALARM2_NUM4, A
+        CLR             A
+        RET
+ 
+ 
+ 
+INCREASE_MINUTE_2:
+        CALL    DELAY_1S
+        CLR     A
+        MOV     A,MIN_AL
+        ADD     A,#1
+        DA      A
+        MOV     MIN_AL,A
+       
+        MOV     A,MIN_AL
+        CJNE    A,#60H, DISPLAY_MIN_SPLIT_2
+        CLR     A
+        MOV     MIN_AL,A
+        RET
+       
+DISPLAY_MIN_SPLIT_2:
+       
+        ANL     A,      #0FH
+        MOV     MIN1_AL,        A
+        MOV     A,      MIN_AL
+        SWAP    A
+        ANL     A,      #0FH
+        MOV     MIN10_AL,       A
+        JMP     DISPLAY_MIN_2
+       
+       
+DISPLAY_MIN_2:
+        DISPLAY_M1_2:
+        CALL    DELAY
+        MOV     A,      MIN1_AL
+        MOV     DPTR,   #ARR
+        MOVC    A,      @A+DPTR
+        MOV     P2,     #01H
+        MOV     P1,A
+ 
+        DISPLAY_M2_2:
+        CALL    DELAY
+        MOV     A,      MIN10_AL
+        MOV     DPTR,   #ARR
+        MOVC    A,      @A+DPTR
+        MOV     P2,     #02H
+        MOV     P1,A
+        RET
+ 
+INCREASE_HOUR_2:
+        CALL    DELAY_1S
+        CLR     A
+        MOV     A,      HR_AL
+        ADD     A,      #1
+        DA      A
+        MOV     HR_AL,  A
+       
+        MOV     A,      HR_AL
+        CJNE    A,#24H, DISPLAY_HR_SPLIT_2
+        CLR     A
+        MOV     HR_AL,  A
+        RET
+       
+DISPLAY_HR_SPLIT_2:
+       
+        ANL     A,#0FH
+        MOV     HR1_AL, A
+        MOV     A,HR_AL
+        SWAP    A
+        ANL     A,#0FH
+        MOV     HR10_AL,A
+        JMP     DISPLAY_HR_2
+       
+       
+DISPLAY_HR_2:
+        DISPLAY_H1_2:
+        CALL    DELAY
+        MOV             A,HR1_AL
+        MOV             DPTR,#ARR
+        MOVC    A,      @A+DPTR
+        MOV P2, #04H
+        MOV     P1,     A
+ 
+        DISPLAY_H2_2:
+        CALL    DELAY
+        MOV             A,HR10_AL
+        MOV             DPTR,#ARR
+        MOVC    A,      @A+DPTR
+        MOV     P2,     #08H
+        MOV     P1,A
+        RET
+ 
+;==SUBROUTINE FOR SETTING ALARM ENDS HERE==
+ 
+;==SUBROUTINE FOR THE ALARM ACTIVATION==
+CHECKING_ALARM1:
+ALARM1_MINUTE:  MOV     A, MIN1
+                CJNE    A, ALARM1_NUM4,SKIPPING1
+                JMP     ALARM1_MINUTE2
+ 
+ALARM1_MINUTE2: MOV     A, MIN10
+                CJNE    A, ALARM1_NUM3,SKIPPING1
+                JMP     ALARM1_HOUR
+               
+ALARM1_HOUR:    MOV     A, HR1
+                CJNE    A, ALARM1_NUM2,SKIPPING1
+                JMP     ALARM1_HOUR2
+ 
+ALARM1_HOUR2:   MOV     A, HR10
+                CJNE    A, ALARM1_NUM1,SKIPPING1
+                JMP     ACTIVATES1
+ 
+SKIPPING1:
+        RET    
+               
+ACTIVATES1:
+        CLR             A
+        MOV             ALARM1_NUM4,A
+        MOV             ALARM1_NUM3,A
+        MOV             ALARM1_NUM2,A
+        MOV             ALARM1_NUM1,A
+        SETB    P0.0
+        RET
+ 
+CHECKING_ALARM2:
+ALARM2_MINUTE:  MOV     A, MIN1
+                CJNE    A, ALARM2_NUM4,SKIPPING2
+                JMP     ALARM2_MINUTE2
+ 
+ALARM2_MINUTE2: MOV     A, MIN10
+                CJNE    A, ALARM2_NUM3,SKIPPING2
+                JMP     ALARM2_HOUR
+               
+ALARM2_HOUR:    MOV     A, HR1
+                CJNE    A, ALARM2_NUM2,SKIPPING2
+                JMP     ALARM2_HOUR2
+ 
+ALARM2_HOUR2:   MOV     A, HR10
+                CJNE    A, ALARM2_NUM1,SKIPPING2
+                JMP     ACTIVATES2
+ 
+SKIPPING2:
+        RET
+ACTIVATES2:
+        CLR             A
+        MOV             ALARM2_NUM4,A
+        MOV             ALARM2_NUM3,A
+        MOV             ALARM2_NUM2,A
+        MOV             ALARM2_NUM1,A
+        SETB    P0.0
+        RET
+;==SUBROUTINE FOR ALARM ACTIVATION ENDS HERE==
+ 
+;ACTIVATION -00
+SPLIT_MIN21:
+        ANL     A,#0FH
+        MOV     MIN1,   A
+        MOV     A,MIN
+        SWAP    A
+        ANL     A,      #0FH
+        MOV     MIN10,A
+        JMP     DISPLAY_MIN21
+       
+DISPLAY_MIN21:
+DISPLAY_M121:
+        CALL    DELAY
+        MOV     A, MIN1
+        MOV     DPTR,   #ARR
+        MOVC    A,      @A+DPTR
+        MOV     P2,     #01H
+        MOV     P1,A
+ 
+DISPLAY_M221:
+        CALL    DELAY
+        MOV     A,      MIN10
+        MOV     DPTR,   #ARR
+        MOVC    A,      @A+DPTR
+        MOV     P2,     #02H
+        MOV     P1,A
+        RET
+ 
+SPLIT_HR21:
+        ANL     A,#0FH
+        MOV     HR1,    A
+        MOV     A,HR
+        SWAP    A
+        ANL     A,      #0FH
+        MOV     HR10,A
+        JMP     DISPLAY_HR21
+       
+DISPLAY_HR21:
+DISPLAY_H121:
+        CALL    DELAY
+        MOV     A,      HR1
+        MOV     DPTR,   #ARR
+        MOVC    A,      @A+DPTR
+        MOV P2, #04H
+        MOV     P1,     A
+ 
+DISPLAY_H221:
+        CALL    DELAY
+        MOV     A,      HR10
+        MOV     DPTR,   #ARR
+        MOVC    A,      @A+DPTR
+        MOV     P2,     #08H
+        MOV     P1,A
+        RET
+;ENDS HERE
+;===SUBROUTINE FOR COUNTDOWN TIMER STARTS HERE
+START:
+;MAKING BUTTONS TO INCREASE THE HOURS AND NUMBERS
+        CLR             P0.0
+        CALL    DISPLAY_CDTSEC1
+        CALL    DISPLAY_CDTSEC2
+        CALL    DISPLAY_CDTMIN1
+        CALL    DISPLAY_CDTMIN2
+ 
+SCDT1:  JB      P3.0,SCDT2
+        CALL    INCREASE_CDTS1
+        JMP     SCDT1
+ 
+SCDT2:  JB      P3.1,SCDT3
+                JMP     JUMP_TO_BTN
+ 
+SCDT3:  JB      P3.4,SCDT4
+        CALL    INCREASE_CDTM1
+        JMP     SCDT3
+ 
+SCDT4:  JB      P3.5,SCDT5
+        CLR     A,
+        MOV     CDT_SEC1,A
+        MOV     CDT_SEC10,A
+        MOV CDT_MIN1,A
+        MOV     CDT_MIN10,A
+        JMP     SCDT4
+ 
+SCDT5:  JB      P3.6,START
+       
+        SETB    TF1
+        SJMP    $
+;
+DISPLAY_CDTSEC1i:
+        CLR     A
+        CALL    DELAYX
+        MOV     A, CDT_SEC1
+        MOV     DPTR, #ARR
+        MOVC    A, @A+DPTR
+        MOV     P2,     #01H
+        MOV     P1,     A
+       
+       
+DISPLAY_CDTSEC2i:
+        CLR     A
+        CALL    DELAYX
+        MOV     A, CDT_SEC10
+        MOV     DPTR, #ARR
+        MOVC    A, @A+DPTR
+        MOV     P2,     #02H
+        MOV     P1,     A
+ 
+DISPLAY_CDTMIN1i:
+        CLR     A
+        CALL    DELAYX
+        MOV     A, CDT_MIN1
+        MOV     DPTR, #ARR
+        MOVC    A, @A+DPTR
+        MOV     P2,     #04H
+        MOV     P1,     A
+       
+ 
+DISPLAY_CDTMIN2i:
+        CLR     A
+        CALL    DELAYX
+        MOV     A, CDT_MIN10
+        MOV     DPTR,   #ARR
+        MOVC    A, @A+DPTR
+        MOV     P2,     #08H
+        MOV     P1,     A
+        JMP     SKIP_NUMBERS
+LOSING_NUMBERS:
+        PUSH    ACC
+        PUSH    00H
+        CLR             TR1
+        MOV             TH1, #0ECH
+        MOV             TL1, #78H
+        SETB    TR1
+        CALL    DISPLAY_CDTSECOND
+        CALL    DISPLAY_CDTMINUTE
+        INC             CDT_TICK
+        MOV             A, #200
+        CJNE    A, CDT_TICK,SKIP_NUMBERS
+        CLR             A
+        MOV             CDT_TICK, A
+LOSING_1:      
+               
+                CLR     A
+                MOV     A, CDT_SEC1
+                DEC     CDT_SEC1
+                CJNE    A,#0,DISPLAY_CDTSEC1i
+                MOV     A, CDT_SEC10
+                CJNE    A,#0,LOSING_2
+                MOV     A, CDT_MIN1
+                CJNE    A,#0, LOSING_3
+                MOV     A, CDT_SEC1
+                CLR     A
+                MOV     CDT_SEC1, A
+ 
+                CALL    FINAL_ONE
+                JMP     SKIP_NUMBERS
+LOSING_2:
+                MOV     A, CDT_SEC1
+                MOV     A, #9
+                MOV     CDT_SEC1, A
+                CLR     A
+                MOV     A, CDT_SEC10
+                DEC     CDT_SEC10
+                MOV     A, CDT_SEC10
+                CJNE    A, #0, DISPLAY_CDTSEC2i
+                CLR     A
+                MOV     CDT_SEC10, A
+ 
+                JMP     SKIP_NUMBERS
+ 
+LOSING_3:
+                MOV     A, CDT_SEC1
+                MOV     A, #9
+                MOV     CDT_SEC1, A
+                MOV     A, CDT_SEC10
+                MOV     A, #5
+                MOV     CDT_SEC10, A
+                CLR     A
+                MOV     A, CDT_MIN1
+                DEC     CDT_MIN1
+                MOV     A, CDT_MIN1
+                CJNE    A, #0, DISPLAY_CDTMIN1i
+                CLR     A
+                MOV     CDT_MIN1, A
+               
+                JMP     SKIP_NUMBERS
+               
+SKIP_NUMBERS:
+        POP     00H
+        POP     ACC
+        RETI
+       
+FINAL_ONE:     
+CHECKING_NO:
+NO_1:  
+                CLR     A
+                MOV     A, CDT_SEC1
+                CJNE    A, #0, NOTING
+                JMP     NO_2
+               
+NO_2:   CLR     A      
+                MOV     A, CDT_SEC10
+                CJNE    A, #0, NOTING
+                JMP     NO_3
+               
+NO_3:   CLR     A      
+                MOV     A, CDT_MIN1
+                CJNE    A, #0, NOTING
+                JMP     TWITCHERS
+               
+TWITCHERS:      SETB    P0.0
+                        CALL    DELAY_1S
+                        CLR             P0.0
+                        SJMP    $
+               
+NOTING:
+        RET
+ 
+;SUBROUTINE FOR INCREMENTING NUMBER STARTS HERE
+INCREASE_CDTS1:
+        CALL    DELAY_1S
+        INC     CDT_SEC1
+        CLR     A
+        MOV     A,CDT_SEC1
+        MOV     CDT_SEC1, A
+       
+        CJNE    A,#10,DISPLAY_CDTSEC1
+        CLR     A
+        MOV     CDT_SEC1,A
+       
+ 
+INCREASE_CDTS2:
+        CALL    DELAY_1S
+        INC     CDT_SEC10
+        CLR     A
+        MOV     A,CDT_SEC10
+        MOV     CDT_SEC10, A
+ 
+        CJNE    A, #6,DISPLAY_CDTSEC2
+        CLR     A
+        MOV     CDT_SEC10,A
+       
+       
+INCREASE_CDTM1:
+        CALL    DELAY_1S
+        INC     CDT_MIN1
+        CLR     A
+        MOV     A,CDT_MIN1
+        MOV     CDT_MIN1, A
+ 
+        CJNE    A, #10, DISPLAY_CDTMIN1
+        CLR     A
+        MOV     CDT_MIN1, A
+        ret
+       
+INCREASE_CDTM2:
+        CALL    DELAY_1S
+        INC     CDT_MIN10
+        CLR     A
+        MOV     A,CDT_MIN10
+        MOV     CDT_MIN10, A
+ 
+        CJNE    A, #6,DISPLAY_CDTMIN2
+        CLR     A
+        MOV     CDT_MIN10, A
+        RET
+       
+;SUBROUTINE FOR INCREMENTING NUMBERS ENDS HERE
+;;
+;SUBROUTINE FOR DISPLAYING NUMBERS STARTS HERE
+DISPLAY_CDTTIME:
+DISPLAY_CDTSECOND:
+DISPLAY_CDTSEC1:
+        CLR     A
+        CALL    DELAYX
+        MOV     A, CDT_SEC1
+        MOV     DPTR, #ARR
+        MOVC    A, @A+DPTR
+        MOV     P2,     #01H
+        MOV     P1,     A
+       
+DISPLAY_CDTSEC2:
+        CLR     A
+        CALL    DELAYX
+        MOV     A, CDT_SEC10
+        MOV     DPTR, #ARR
+        MOVC    A, @A+DPTR
+        MOV     P2,     #02H
+        MOV     P1,     A
+       
+DISPLAY_CDTMINUTE:
+DISPLAY_CDTMIN1:
+        CLR     A
+        CALL    DELAYX
+        MOV     A, CDT_MIN1
+        MOV     DPTR, #ARR
+        MOVC    A, @A+DPTR
+        MOV     P2,     #04H
+        MOV     P1,     A
+        RET
+DISPLAY_CDTMIN2:
+        CLR     A
+        CALL    DELAYX
+        MOV     A, CDT_MIN10
+        MOV     DPTR,   #ARR
+        MOVC    A, @A+DPTR
+        MOV     P2,     #08H
+        MOV     P1,     A
+        RET
+ 
+ 
+;SUBROUTINE FOR DISPLAYING NUMBERS ENDS HERE
+ 
+DELAYX:
+        MOV R0, 200
+        DJNZ R0, $
+        RET
+;SUBROUTINE FOR COUNTDOWN TIMER ENDS HERE
+ 
+;==ALL OF THE DELAY SUBROUTINE GOES HERE==
+DELAY_1S:                                       ;A VERY CRUDE DELAY THAT IS APPROXIMATE TO 1S
+        MOV             R4,             #2
+WAIT1:  MOV             R3,             #100
+WAIT2:  MOV             R2,             #200
+HERE:   NOP
+        NOP
+        NOP
+        DJNZ    R2,             HERE
+        DJNZ    R3,             WAIT2
+        DJNZ    R4,             WAIT1
+        RET    
+ 
+DELAY_5MS:
+        CLR     TR1
+        MOV     TH1, #0ECH
+        MOV     TL1, #078H
+        SETB    TR1
+        JNB     TF1, $
+        CLR     TF1
+        CLR     TR1
+        RET
+ 
+DELAY_1MS: MOV R6,#250
+       MOV R7,#250
+LABEL1: DJNZ R6,LABEL1
+LABEL2: DJNZ R7,LABEL2
+        RET
+ 
+;==BLINKING POINT SUBROUTINE==
+BLINKL:
+        MOV     P2, #04H
+        MOV     P1, #07FH
+        CALL    DELAY_5MS
+        RET
+ 
+DELAY:
+        MOV R0, 200
+        DJNZ R0, $
+        RET
+;==SUBROUTINE ENDS HERE==
+ 
+;CHECKING BUTTONS TO END THE ALARM NOISE
+CHECKING_BUTTONS:
+                JNB     P3.0,SWITCH_OFF
+                RET
+SWITCH_OFF:     CLR     P0.0
+                RET
+;SUBROUTINE ENDS HERE
+;subroutine for hourly chime
+TWITCHING:
+        CPL     P0.0
+        CALL    DELAY_5MS
+        CLR     P0.0
+        RET
+;subroutine ends here
+;==ARRAYS OF NUMBER DEFINED BY BITS==
+ARR:
+        DB      0C0H
+        DB      0F9H
+        DB      0A4H
+        DB      0B0H
+        DB      099H
+        DB      092H
+        DB      082H
+        DB      0F8H
+        DB      080H
+        DB      090H
+ 
+END
